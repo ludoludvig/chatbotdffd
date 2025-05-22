@@ -1,56 +1,73 @@
 import streamlit as st
-from openai import OpenAI
+import pandas as pd
+import openai
 
-# Show title and description.
-st.title("💬 Chatbot")
-st.write(
-    "This is a simple chatbot that uses OpenAI's GPT-3.5 model to generate responses. "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
-    "You can also learn how to build this app step by step by [following our tutorial](https://docs.streamlit.io/develop/tutorials/llms/build-conversational-apps)."
-)
+# === CONFIGURAZIONE ===
+openai.api_key = st.secrets["OPENAI_API_KEY"]  # Imposta la tua API key su Streamlit secrets
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# Dizionario GWP semplificato
+GWP_DB = {
+    "aluminium": 9.16,
+    "stainless steel": 6.15,
+    "carbon fiber": 20.0,
+    "plywood": 0.35,
+    "teak": 0.21,
+    "PVC": 2.9,
+    "brass": 7.2
+}
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
-
-    # Create a session state variable to store the chat messages. This ensures that the
-    # messages persist across reruns.
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # Display the existing chat messages via `st.chat_message`.
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Create a chat input field to allow the user to enter a message. This will display
-    # automatically at the bottom of the page.
-    if prompt := st.chat_input("What is up?"):
-
-        # Store and display the current prompt.
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # Generate a response using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.messages
-            ],
-            stream=True,
+# === FUNZIONE GPT ===
+def identify_material(description):
+    prompt = f"""
+You are an expert in sustainable naval architecture.
+Given the following component description: "{description}", identify the most likely standard material used, choosing from this list:
+- aluminium
+- stainless steel
+- carbon fiber
+- plywood
+- teak
+- PVC
+- brass
+Only return the material name.
+"""
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
         )
+        material = response['choices'][0]['message']['content'].strip().lower()
+        return material if material in GWP_DB else "unknown"
+    except Exception as e:
+        return "error"
 
-        # Stream the response to the chat using `st.write_stream`, then store it in 
-        # session state.
-        with st.chat_message("assistant"):
-            response = st.write_stream(stream)
-        st.session_state.messages.append({"role": "assistant", "content": response})
+# === STREAMLIT UI ===
+st.title("Yacht Lightship GWP Estimator (AI-based)")
+
+uploaded_file = st.file_uploader("Upload your Lightship Excel file", type=["xlsx"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file)
+    st.write("## Preview of uploaded file:", df.head())
+
+    if "Description" not in df.columns or "Weight (kg)" not in df.columns:
+        st.error("The Excel must contain at least 'Description' and 'Weight (kg)' columns.")
+    else:
+        with st.spinner("Identifying materials using AI..."):
+            df["Identified Material"] = df["Description"].apply(identify_material)
+            df["GWP per kg"] = df["Identified Material"].apply(lambda x: GWP_DB.get(x, 0))
+            df["GWP (kg CO2eq)"] = df["Weight (kg)"] * df["GWP per kg"]
+
+            total_weight_ton = df["Weight (kg)"].sum() / 1000
+            total_gwp_ton = df["GWP (kg CO2eq)"].sum() / 1000
+            specific_gwp = total_gwp_ton / total_weight_ton if total_weight_ton else 0
+
+        st.success("Analysis complete.")
+        st.write("## Results:")
+        st.dataframe(df)
+
+        st.markdown(f"**Total weight:** {total_weight_ton:.2f} t")
+        st.markdown(f"**Total GWP:** {total_gwp_ton:.2f} t CO2eq")
+        st.markdown(f"**Specific GWP:** {specific_gwp:.2f} t CO2eq/t yacht")
+
+        # Download
+        st.download_button("Download Results as Excel", df.to_excel(index=False), "gwp_results.xlsx")
