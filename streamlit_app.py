@@ -2,8 +2,16 @@ import streamlit as st
 import pandas as pd
 import openai
 
-# === CONFIGURAZIONE ===
-openai.api_key = st.secrets["OPENAI_API_KEY"]  # Imposta la tua API key su Streamlit secrets
+# === INTERFACCIA STREAMLIT ===
+st.title("Yacht Lightship GWP Estimator (AI-based)")
+
+# Inserimento manuale della chiave API
+api_key = st.text_input("Enter your OpenAI API Key", type="password")
+if not api_key:
+    st.warning("Please enter your OpenAI API key to proceed.")
+    st.stop()
+
+openai.api_key = api_key
 
 # Dizionario GWP semplificato
 GWP_DB = {
@@ -39,9 +47,6 @@ Only return the material name.
         return material if material in GWP_DB else "unknown"
     except Exception as e:
         return "error"
-
-# === STREAMLIT UI ===
-st.title("Yacht Lightship GWP Estimator (AI-based)")
 
 uploaded_file = st.file_uploader("Upload your Lightship Excel file", type=["xlsx"])
 
